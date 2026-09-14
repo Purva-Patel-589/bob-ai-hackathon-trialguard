@@ -58,8 +58,25 @@ CSV -> data_loader -> deviation_detector -> severity -> risk_scoring
   risk points by factor, filterable deviation records
 - **How it works tab:** the current rules, read live from `config.py`
 
-Invalid uploads (missing columns, empty or malformed files) show a friendly
-error message instead of a traceback.
+### Upload validation and data preparation
+
+Uploads never show a Python traceback. `utils/data_loader.py` handles:
+
+| Problem | What happens |
+|---|---|
+| Missing required columns | Error listing missing and found columns (with a hint for semicolon/tab files) |
+| Empty file, headers only | Error |
+| Rows with more values than headers | Error (instead of silently shifting columns) |
+| Text in `actual_day` / `dose_mg`, blank IDs | Error with CSV row numbers |
+| Excel "CSV UTF-8" or Windows-1252 files | Read normally |
+| Visit names in different capitals/spacing (`visit  2`) | Matched to the protocol, with a note |
+| Visit names not in the protocol | Those records are ignored, with a note (error if none match) |
+| Exact duplicate records | Counted once, with a note |
+| Same patient/visit with different values | Kept, with a warning |
+| `N/A`, `-`, `null`… in `medication` | Warning: only `None` means no medication |
+| Negative numbers, patient at two sites | Warning |
+
+Notes and warnings are shown at the top of the dashboard.
 
 ## CAPA reports
 
@@ -85,8 +102,10 @@ A site with no deviations and no warnings gets: *"No CAPA actions are
 currently indicated for this site based on the available demo data."*
 
 In the dashboard the report appears under **Site details → CAPA report**, with
-a **Download CAPA report** button. The report is created in memory; no files
-are written.
+a **Download CAPA report** button (`trialguard_capa_<SITE_ID>.md`). The report
+is created in memory; no files are written. On screen it is shown with smaller
+headings (`build_capa_report(..., for_screen=True)`); the downloaded Markdown
+keeps the full document title.
 
 ## Deviation detection rules
 
@@ -99,6 +118,22 @@ are written.
 | Missing documentation | A visit that took place has a blank `dose_mg` or blank `medication` |
 
 Missed visits are not checked for the other rules.
+
+### Completed vs ongoing trials
+
+A visit with **no record at all** is handled according to the trial status
+(`assume_schedule_complete` in `detect_deviations()`):
+
+| Trial status | Unrecorded visit counts as missed when… | Used by |
+|---|---|---|
+| Completed (default) | always | built-in demo data |
+| Ongoing | the patient has a record for a **later** visit | CSV upload, if the user picks "Ongoing" |
+
+In ongoing mode, visits after a patient's last record are "not yet due" and
+the dashboard shows how many there are. Trade-off: a patient who dropped out
+is not flagged for visits they never reached — add a row with a blank
+`actual_day` to record a visit that was definitely missed. (A record with a
+blank `actual_day` is always a missed visit.)
 
 ## Severity rules
 

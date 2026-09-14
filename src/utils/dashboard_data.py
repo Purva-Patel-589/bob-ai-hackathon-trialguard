@@ -15,7 +15,7 @@ import io
 import pandas as pd
 
 import config
-from core.deviation_detector import detect_deviations
+from core.deviation_detector import count_visits_not_yet_due, detect_deviations
 from core.early_warning import detect_early_warnings, summarize_site_warnings
 from core.risk_scoring import (
     FACTOR_BY_DEVIATION_TYPE,
@@ -31,6 +31,7 @@ from utils.data_loader import (
     get_data_warnings,
     load_patients,
     load_protocol,
+    prepare_patient_records,
 )
 
 ALL_SITES = "All Sites"
@@ -44,19 +45,29 @@ KNOWN_ERRORS = (DataValidationError, SeverityRuleError, RiskScoringError)
 # ---------------------------------------------------------------------------
 # Running the analysis
 # ---------------------------------------------------------------------------
-def run_analysis(patients, protocol):
+def run_analysis(patients, protocol, assume_schedule_complete=True):
     """
     Run every TrialGuard step on already-loaded patient records.
-    Returns a dict with: protocol, patients, data_warnings, deviations,
-    site_risk, warnings, site_summary.
+
+    assume_schedule_complete: True if every patient has finished the visit
+    schedule (the demo data); False for a trial that is still ongoing, so
+    visits after a patient's last record are not counted as missed.
+
+    Returns a dict with: protocol, patients, data_notes, data_warnings,
+    assume_schedule_complete, visits_not_yet_due, deviations, site_risk,
+    warnings, site_summary.
     """
-    deviations = add_severity(detect_deviations(patients, protocol))
-    site_risk = calculate_site_risk(deviations, patients)
+    prepared, notes = prepare_patient_records(patients, protocol)
+    deviations = add_severity(detect_deviations(prepared, protocol, assume_schedule_complete))
+    site_risk = calculate_site_risk(deviations, prepared)
     warnings = detect_early_warnings(site_risk, deviations, protocol)
     return {
         "protocol": protocol,
-        "patients": patients,
-        "data_warnings": get_data_warnings(patients, protocol),
+        "patients": prepared,
+        "data_notes": notes,
+        "data_warnings": get_data_warnings(prepared, protocol),
+        "assume_schedule_complete": assume_schedule_complete,
+        "visits_not_yet_due": 0 if assume_schedule_complete else count_visits_not_yet_due(prepared, protocol),
         "deviations": deviations,
         "site_risk": site_risk,
         "warnings": warnings,
@@ -64,7 +75,7 @@ def run_analysis(patients, protocol):
     }
 
 
-def analyze_source(source, protocol_path=config.PROTOCOL_PATH):
+def analyze_source(source, protocol_path=config.PROTOCOL_PATH, assume_schedule_complete=True):
     """
     Load patient records from a file path or file-like object and analyse them.
 
@@ -75,7 +86,7 @@ def analyze_source(source, protocol_path=config.PROTOCOL_PATH):
     try:
         protocol = load_protocol(protocol_path)
         patients = load_patients(source)
-        return run_analysis(patients, protocol), None
+        return run_analysis(patients, protocol, assume_schedule_complete), None
     except KNOWN_ERRORS as error:
         return None, str(error)
     except Exception as error:  # noqa: BLE001 - the dashboard must never show a traceback
@@ -85,11 +96,19 @@ def analyze_source(source, protocol_path=config.PROTOCOL_PATH):
         )
 
 
-def analyze_uploaded_bytes(file_bytes):
+def protocol_visit_names(protocol_path=config.PROTOCOL_PATH):
+    """Visit names from the protocol for help text; empty list if the protocol can't be read."""
+    try:
+        return [visit["visit"] for visit in load_protocol(protocol_path)["visits"]]
+    except DataValidationError:
+        return []
+
+
+def analyze_uploaded_bytes(file_bytes, assume_schedule_complete=True):
     """Analyse the bytes of an uploaded CSV file. Same return value as analyze_source()."""
     if not file_bytes:
         return None, "The uploaded file is empty."
-    return analyze_source(io.BytesIO(file_bytes))
+    return analyze_source(io.BytesIO(file_bytes), assume_schedule_complete=assume_schedule_complete)
 
 
 # ---------------------------------------------------------------------------
@@ -115,19 +134,27 @@ def level_label(level):
     return f"{LEVEL_ICONS.get(level, '⚪')} {level}"
 
 
-def site_overview_table(site_risk):
-    """The site risk table with friendly column names, highest risk first."""
+def site_overview_table(site_risk, site_summary=None):
+    """
+    The site risk table with friendly column names, highest risk first.
+    If `site_summary` (from summarize_site_warnings) is given, an
+    'Early Warnings' count column is added.
+    """
     table = site_risk.sort_values("risk_score", ascending=False, kind="stable")
-    return pd.DataFrame({
+    overview = pd.DataFrame({
         "Site": table["site_id"],
+        "Risk Level": table["risk_level"].map(level_label),
+        "Risk Score": table["risk_score"],
         "Patients": table["patients"],
         "Deviations": table["total_deviations"],
         "Major": table["major_deviations"],
         "Minor": table["minor_deviations"],
         "Administrative": table["administrative_deviations"],
-        "Risk Score": table["risk_score"],
-        "Risk Level": table["risk_level"].map(level_label),
-    }).reset_index(drop=True)
+    })
+    if site_summary is not None:
+        warning_counts = site_summary.set_index("site_id")["warning_count"]
+        overview["Early Warnings"] = table["site_id"].map(warning_counts).fillna(0).astype(int)
+    return overview.reset_index(drop=True)
 
 
 def count_by(deviations, column, order):

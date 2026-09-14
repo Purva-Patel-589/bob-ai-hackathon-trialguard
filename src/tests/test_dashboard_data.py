@@ -27,10 +27,25 @@ def demo():
 # Loading and error handling (never raises)
 # ---------------------------------------------------------------------------
 def test_demo_analysis_contains_every_step(demo):
-    assert set(demo) == {"protocol", "patients", "data_warnings", "deviations", "site_risk", "warnings", "site_summary"}
+    assert set(demo) == {
+        "protocol", "patients", "data_notes", "data_warnings", "assume_schedule_complete",
+        "visits_not_yet_due", "deviations", "site_risk", "warnings", "site_summary",
+    }
     assert len(demo["deviations"]) == 42
     assert "severity" in demo["deviations"].columns
     assert demo["data_warnings"] == []
+    assert demo["data_notes"] == []
+    assert demo["assume_schedule_complete"] is True
+    assert demo["visits_not_yet_due"] == 0
+
+
+@pytest.mark.parametrize(
+    "site_id, score, level, deviations",
+    [("SITE-104", 68, "HIGH", 14), ("SITE-107", 52, "MEDIUM", 15), ("SITE-105", 0, "LOW", 0), ("SITE-110", 0, "LOW", 0)],
+)
+def test_demo_key_sites_unchanged(demo, site_id, score, level, deviations):
+    row = demo["site_risk"].set_index("site_id").loc[site_id]
+    assert (row["risk_score"], row["risk_level"], row["total_deviations"]) == (score, level, deviations)
 
 
 def test_uploaded_bytes_give_same_result_as_demo_file(demo):
@@ -54,6 +69,9 @@ def test_sample_invalid_upload_returns_friendly_error():
         ((HEADER + ",SITE-1,Visit 1,0,10,None\n").encode(), "patient_id"),
         (b"\xff\xfe\x00\x81\x82 not a csv", "could not be read"),
         (b"just one line of text with no columns", "missing required column"),
+        ((HEADER + "PT-1,SITE-1,Visit 1,0,10,None,EXTRA\n").encode(), "more values than there are column headers"),
+        ((HEADER + "PT-1,SITE-1,Week 1,0,10,None\n").encode(), "no visit name matches the protocol"),
+        (HEADER.replace(",", ";").encode() + b"PT-1;SITE-1;Visit 1;0;10;None\n", "semicolons"),
     ],
 )
 def test_bad_uploads_return_errors_not_exceptions(file_bytes, expected_text):
@@ -63,7 +81,7 @@ def test_bad_uploads_return_errors_not_exceptions(file_bytes, expected_text):
 
 
 def test_unexpected_error_is_turned_into_a_message(monkeypatch):
-    def broken(patients, protocol):
+    def broken(patients, protocol, assume_schedule_complete=True):
         raise RuntimeError("something odd")
 
     monkeypatch.setattr(data, "run_analysis", broken)
@@ -73,11 +91,104 @@ def test_unexpected_error_is_turned_into_a_message(monkeypatch):
     assert "something odd" in error
 
 
-def test_unknown_visit_names_are_reported_as_data_warnings():
-    text = HEADER + "PT-1,SITE-1,Visit 1,0,10,None\nPT-1,SITE-1,Visit 9,5,10,None\n"
+def full_schedule(patient="PT-1", site="SITE-1"):
+    return "".join(f"{patient},{site},Visit {n},{day},10,None\n" for n, day in [(1, 0), (2, 14), (3, 28), (4, 56)])
+
+
+def test_unknown_visit_names_are_ignored_and_explained():
+    text = HEADER + full_schedule() + "PT-1,SITE-1,Visit 9,5,20,DrugB\n"
     result, error = data.analyze_uploaded_bytes(text.encode())
     assert error is None
-    assert any("Visit 9" in warning for warning in result["data_warnings"])
+    assert any("Visit 9" in note and "Ignored 1 record" in note for note in result["data_notes"])
+    assert result["deviations"].empty  # the Visit 9 row's wrong dose/medication is not analysed
+
+
+def test_patient_with_only_unknown_visits_gets_no_false_missed_visits():
+    text = HEADER + full_schedule() + "PT-2,SITE-1,Week 1,0,10,None\nPT-2,SITE-1,Week 2,14,10,None\n"
+    result, error = data.analyze_uploaded_bytes(text.encode())
+    assert error is None
+    assert result["deviations"].empty
+    assert data.study_metrics(result)["total_patients"] == 1
+
+
+def test_visit_names_match_ignoring_capitals_and_spaces():
+    text = HEADER + full_schedule().replace("Visit 2", "visit  2").replace("Visit 3", " VISIT 3 ")
+    result, error = data.analyze_uploaded_bytes(text.encode())
+    assert error is None
+    assert result["deviations"].empty
+    assert any("ignoring capitals and spaces" in note for note in result["data_notes"])
+
+
+def test_exact_duplicate_records_are_counted_once():
+    text = HEADER + full_schedule().replace("Visit 2,14,10,None", "Visit 2,14,20,None") + "PT-1,SITE-1,Visit 2,14,20,None\n"
+    result, error = data.analyze_uploaded_bytes(text.encode())
+    assert error is None
+    assert len(result["deviations"]) == 1  # one wrong dose, not two
+    assert any("Removed 1 exact duplicate" in note for note in result["data_notes"])
+    assert result["data_warnings"] == []
+
+
+def test_conflicting_duplicates_are_kept_and_warned():
+    text = HEADER + full_schedule() + "PT-1,SITE-1,Visit 2,15,10,None\n"
+    result, error = data.analyze_uploaded_bytes(text.encode())
+    assert error is None
+    assert any("more than once with different values" in warning for warning in result["data_warnings"])
+
+
+def test_no_medication_lookalike_is_warned():
+    text = HEADER + full_schedule().replace("Visit 2,14,10,None", "Visit 2,14,10,N/A")
+    result, error = data.analyze_uploaded_bytes(text.encode())
+    assert error is None
+    assert result["deviations"].empty
+    assert any("'N/A'" in warning and "look like 'no medication'" in warning for warning in result["data_warnings"])
+
+
+def test_excel_utf8_and_windows_encoded_files_are_accepted():
+    utf8_with_marker = ("\ufeff" + HEADER + full_schedule()).encode("utf-8")
+    windows_encoded = (HEADER + full_schedule().replace("None", "Paracétamol")).encode("cp1252")
+    for file_bytes in (utf8_with_marker, windows_encoded):
+        result, error = data.analyze_uploaded_bytes(file_bytes)
+        assert error is None
+        assert data.study_metrics(result)["total_patients"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Mid-trial uploads (trial still ongoing)
+# ---------------------------------------------------------------------------
+MID_TRIAL = (
+    HEADER
+    + full_schedule("PT-DONE")                                   # finished all visits
+    + "PT-MID,SITE-1,Visit 1,0,10,None\nPT-MID,SITE-1,Visit 2,14,10,None\n"  # reached Visit 2 so far
+    + "PT-GAP,SITE-1,Visit 1,0,10,None\nPT-GAP,SITE-1,Visit 3,28,10,None\n"  # skipped Visit 2
+)
+
+
+def test_completed_trial_counts_every_unrecorded_visit_as_missed():
+    result, _ = data.analyze_uploaded_bytes(MID_TRIAL.encode(), assume_schedule_complete=True)
+    missed = result["deviations"].groupby("patient_id")["visit"].apply(list).to_dict()
+    assert missed == {"PT-GAP": ["Visit 2", "Visit 4"], "PT-MID": ["Visit 3", "Visit 4"]}
+
+
+def test_ongoing_trial_does_not_flag_visits_not_yet_due():
+    result, error = data.analyze_uploaded_bytes(MID_TRIAL.encode(), assume_schedule_complete=False)
+    assert error is None
+    missed = result["deviations"].groupby("patient_id")["visit"].apply(list).to_dict()
+    assert missed == {"PT-GAP": ["Visit 2"]}   # a real gap before a later visit is still missed
+    assert result["visits_not_yet_due"] == 3   # PT-MID Visit 3 and 4, PT-GAP Visit 4
+    assert result["assume_schedule_complete"] is False
+
+
+def test_demo_data_in_ongoing_mode_documents_the_trade_off():
+    """
+    Known trade-off: PT-107-12 has no Visit 4 record and no later visit, so in
+    ongoing mode it is 'not yet due' instead of missed. The demo therefore uses
+    completed mode (the default).
+    """
+    result, error = data.analyze_source(config.DEMO_PATIENTS_PATH, assume_schedule_complete=False)
+    assert error is None
+    site_107 = result["site_risk"].set_index("site_id").loc["SITE-107"]
+    assert site_107["total_deviations"] == 14
+    assert result["visits_not_yet_due"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -98,14 +209,32 @@ def test_study_metrics(demo):
 def test_site_overview_table(demo):
     table = data.site_overview_table(demo["site_risk"])
     assert list(table.columns) == [
-        "Site", "Patients", "Deviations", "Major", "Minor", "Administrative", "Risk Score", "Risk Level",
+        "Site", "Risk Level", "Risk Score", "Patients", "Deviations", "Major", "Minor", "Administrative",
     ]
     assert table["Risk Score"].is_monotonic_decreasing
     assert table.iloc[0].to_dict() == {
-        "Site": "SITE-104", "Patients": 12, "Deviations": 14, "Major": 12, "Minor": 0,
-        "Administrative": 2, "Risk Score": 68, "Risk Level": "🔴 HIGH",
+        "Site": "SITE-104", "Risk Level": "🔴 HIGH", "Risk Score": 68, "Patients": 12, "Deviations": 14,
+        "Major": 12, "Minor": 0, "Administrative": 2,
     }
     assert table.iloc[1]["Risk Level"] == "🟠 MEDIUM"
+
+
+def test_site_overview_table_with_early_warning_counts(demo):
+    table = data.site_overview_table(demo["site_risk"], demo["site_summary"]).set_index("Site")
+    assert table.loc["SITE-104", "Early Warnings"] == 4
+    assert table.loc["SITE-107", "Early Warnings"] == 2
+    assert table.loc["SITE-105", "Early Warnings"] == 0
+
+
+def test_every_risk_level_label_contains_the_word(demo):
+    table = data.site_overview_table(demo["site_risk"])
+    for label in table["Risk Level"]:
+        assert label.split()[-1] in {"HIGH", "MEDIUM", "LOW"}
+
+
+def test_protocol_visit_names():
+    assert data.protocol_visit_names() == ["Visit 1", "Visit 2", "Visit 3", "Visit 4"]
+    assert data.protocol_visit_names("does-not-exist.json") == []
 
 
 @pytest.mark.parametrize("level, label", [("HIGH", "🔴 HIGH"), ("MEDIUM", "🟠 MEDIUM"), ("LOW", "🟢 LOW")])
@@ -196,6 +325,8 @@ def test_site_risk_chart_orders_highest_at_top_and_colours_by_level(demo):
     }
     assert [trace.name for trace in figure.data] == ["HIGH", "MEDIUM", "LOW"]  # legend order
     assert sum(len(trace.y) for trace in figure.data) == 10
+    for trace in figure.data:                   # level word on every bar, not only colour
+        assert all(label.endswith(trace.name) for label in trace.text)
     assert [shape.x0 for shape in figure.layout.shapes] == [30, 60]
 
 

@@ -354,3 +354,29 @@ def test_every_factor_rule_has_issue_and_actions():
             assert rule["issue"]
             assert rule["corrective"]
             assert rule["preventive"]
+
+
+# ---------------------------------------------------------------------------
+# Phase 7: on-screen version and download content
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("site_id", ["SITE-104", "SITE-107", "SITE-105"])
+def test_screen_version_has_small_headings_and_same_content(demo, site_id):
+    inputs = site_inputs(demo, site_id)
+    download = capa.build_capa_report(*inputs, generated_on=DATE)
+    screen = capa.build_capa_report(*inputs, generated_on=DATE, for_screen=True)
+    assert download.startswith("# TrialGuard\n## CAPA / Corrective Action Report\n")
+    assert screen.startswith(f"#### CAPA / Corrective Action Report — {site_id}\n")
+    assert "\n### " not in screen
+    # Apart from the title and heading sizes, the text is identical
+    assert screen.split("\n", 1)[1].replace("#### ", "### ") == download.split("\n", 2)[2]
+
+
+@pytest.mark.parametrize("site_id", ["SITE-104", "SITE-107", "SITE-105", "SITE-110"])
+def test_downloaded_file_content(demo, site_id):
+    report = demo_report(demo, site_id)
+    payload = report.encode("utf-8")          # exactly what the download button receives
+    text = payload.decode("utf-8")            # valid UTF-8
+    assert text.startswith("# TrialGuard")    # valid Markdown document title
+    assert "Prototype recommendations, not regulatory advice." in text
+    assert "Demo only — uses synthetic data. Not for clinical decision-making and not FDA/EMA approved." in text
+    assert capa.capa_file_name(site_id) == f"trialguard_capa_{site_id}.md"

@@ -269,13 +269,29 @@ def deviation_rows(site_deviations):
 # ---------------------------------------------------------------------------
 # Step 2: turn the plan into Markdown
 # ---------------------------------------------------------------------------
-def build_capa_report(site_row, site_warnings, site_deviations, generated_on=None):
-    """Build the full Markdown CAPA report for one site."""
+def build_capa_report(site_row, site_warnings, site_deviations, generated_on=None, for_screen=False):
+    """
+    Build the full Markdown CAPA report for one site.
+    for_screen=True gives smaller headings for showing inside the dashboard;
+    the content is otherwise identical to the downloadable report.
+    """
     plan = build_capa_plan(site_row, site_warnings, site_deviations)
-    return capa_report_markdown(plan, generated_on)
+    return capa_report_markdown(plan, generated_on, for_screen)
 
 
-def capa_report_markdown(plan, generated_on=None):
+def capa_report_markdown(plan, generated_on=None, for_screen=False):
+    lines = _report_lines(plan, generated_on)
+    if for_screen:
+        # Replace the big document title with one small heading and make the
+        # section headings one level smaller, so they sit under the page's own
+        # "CAPA report" heading.
+        lines = [f"#### CAPA / Corrective Action Report — {plan['site_id']}"] + [
+            "#" + line if line.startswith("### ") else line for line in lines[2:]
+        ]
+    return "\n".join(lines) + "\n"
+
+
+def _report_lines(plan, generated_on):
     lines = [
         "# TrialGuard",
         "## CAPA / Corrective Action Report",
@@ -296,7 +312,7 @@ def capa_report_markdown(plan, generated_on=None):
         lines += ["", "### CAPA status", "", f"**{NO_CAPA_MESSAGE}**"]
         lines += ["", "### Monitoring recommendation", "", plan["monitoring"]]
         lines += _footer()
-        return "\n".join(lines) + "\n"
+        return lines
 
     if plan["warnings"]:
         lines += ["", "### Early warnings", ""]
@@ -334,7 +350,7 @@ def capa_report_markdown(plan, generated_on=None):
 
     lines += ["", "### Monitoring recommendation", "", plan["monitoring"]]
     lines += _footer()
-    return "\n".join(lines) + "\n"
+    return lines
 
 
 def capa_file_name(site_id):

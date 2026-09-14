@@ -17,6 +17,7 @@ import pytest
 import config
 from core.deviation_detector import (
     DEVIATION_COLUMNS,
+    count_visits_not_yet_due,
     days_outside_window,
     detect_deviations,
     run_detection,
@@ -370,4 +371,47 @@ def test_demo_clean_sites_have_no_deviations(demo_deviations):
 
 def test_demo_total_deviation_count(demo_deviations):
     # The generator uses a fixed seed, so this number is stable.
+    assert len(demo_deviations) == 42
+
+
+# ---------------------------------------------------------------------------
+# Phase 7: completed vs ongoing trials (assume_schedule_complete)
+# ---------------------------------------------------------------------------
+def test_default_is_completed_trial(protocol):
+    deviations = detect(patient_rows(skip_visits=["Visit 3", "Visit 4"]), protocol)
+    assert list(deviations["visit"]) == ["Visit 3", "Visit 4"]
+
+
+def test_ongoing_trial_skips_visits_after_last_record(protocol):
+    rows = patient_rows(skip_visits=["Visit 3", "Visit 4"])
+    deviations = detect_deviations(to_patients(rows), protocol, assume_schedule_complete=False)
+    assert deviations.empty
+
+
+def test_ongoing_trial_still_flags_gap_before_a_later_visit(protocol):
+    rows = patient_rows(skip_visits=["Visit 2", "Visit 4"])
+    deviations = detect_deviations(to_patients(rows), protocol, assume_schedule_complete=False)
+    assert list(deviations["visit"]) == ["Visit 2"]
+    assert deviations.iloc[0]["actual"] == "No record"
+
+
+def test_ongoing_trial_still_flags_blank_actual_day(protocol):
+    rows = patient_rows(changes={"Visit 4": {"actual_day": "", "dose_mg": "", "medication": ""}})
+    deviations = detect_deviations(to_patients(rows), protocol, assume_schedule_complete=False)
+    assert list(deviations["deviation_type"]) == [config.MISSED_VISIT]
+
+
+def test_blank_day_record_counts_as_reached_for_earlier_gaps(protocol):
+    rows = patient_rows(changes={"Visit 4": {"actual_day": "", "dose_mg": "", "medication": ""}},
+                        skip_visits=["Visit 3"])
+    deviations = detect_deviations(to_patients(rows), protocol, assume_schedule_complete=False)
+    assert sorted(deviations["visit"]) == ["Visit 3", "Visit 4"]
+
+
+def test_count_visits_not_yet_due(protocol):
+    rows = patient_rows("PT-1", skip_visits=["Visit 3", "Visit 4"]) + patient_rows("PT-2", skip_visits=["Visit 2"])
+    assert count_visits_not_yet_due(to_patients(rows), protocol) == 2
+
+
+def test_demo_results_unchanged_by_phase_7(demo_deviations):
     assert len(demo_deviations) == 42
