@@ -10,6 +10,9 @@
 src/
 ├── config.py                  ← every rule, threshold and weight in one place
 ├── check_data.py              ← Phase 1 check: loads data and prints a summary
+├── check_deviations.py        ← Phase 2 check: runs detection and prints examples
+├── core/
+│   └── deviation_detector.py  ← compares records with the protocol, lists deviations
 ├── data/
 │   ├── protocol.json          ← fictional protocol (visits, windows, dose, prohibited meds)
 │   ├── patients.csv           ← synthetic demo dataset (generated, do not edit by hand)
@@ -18,11 +21,25 @@ src/
 ├── utils/
 │   └── data_loader.py         ← reads + validates protocol and patient CSVs
 └── tests/
-    └── test_data_loader.py    ← automated tests (pytest)
+    ├── test_data_loader.py         ← Phase 1 tests (pytest)
+    └── test_deviation_detector.py  ← Phase 2 tests (pytest)
 ```
 
-Coming in later phases: `core/` (deviation detection, severity, risk scoring,
-early warnings, CAPA reports) and `app.py` (Streamlit dashboard).
+Coming in later phases: severity, risk scoring, early warnings and CAPA
+reports in `core/`, and `app.py` (Streamlit dashboard).
+
+## Deviation detection rules
+
+| Deviation type | Rule |
+|---|---|
+| Missed visit | Protocol visit has no record, or the record's `actual_day` is blank |
+| Out-of-window visit | `actual_day` is outside `expected_day ± window_days`; days outside is recorded |
+| Incorrect dose | `dose_mg` differs from the protocol's `expected_dose_mg` |
+| Prohibited medication | A medication in the cell is on the protocol's prohibited list (case-insensitive; one deviation per drug) |
+| Missing documentation | A visit that took place has a blank `dose_mg` or blank `medication` |
+
+Missed visits are not checked for the other rules. Severity is assigned
+separately (Phase 3).
 
 ## Patient CSV format
 
@@ -65,6 +82,9 @@ The exact planted problems are listed in `PLANTED_ISSUES` inside
 
 # Phase 1 data check
 .venv\Scripts\python.exe src\check_data.py
+
+# Phase 2 deviation detection check
+.venv\Scripts\python.exe src\check_deviations.py
 
 # Automated tests
 .venv\Scripts\python.exe -m pytest src\tests -v
