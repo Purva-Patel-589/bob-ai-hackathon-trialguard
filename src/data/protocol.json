@@ -1,0 +1,16 @@
+{
+  "protocol_id": "TG-DEMO-001",
+  "title": "Fictional demonstration protocol for the TrialGuard hackathon prototype",
+  "notice": "SYNTHETIC. This protocol is invented for demonstration only and does not describe any real study or drug.",
+
+  "expected_dose_mg": 10,
+
+  "visits": [
+    { "visit": "Visit 1", "expected_day": 0,  "window_days": 0 },
+    { "visit": "Visit 2", "expected_day": 14, "window_days": 2 },
+    { "visit": "Visit 3", "expected_day": 28, "window_days": 3 },
+    { "visit": "Visit 4", "expected_day": 56, "window_days": 5 }
+  ],
+
+  "prohibited_medications": ["DrugB", "DrugC"]
+}

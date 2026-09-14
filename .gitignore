@@ -86,6 +86,9 @@ demo/*.mkv
 data/
 logs/
 *.log
+# TrialGuard: the rule above would also hide our synthetic demo data.
+# Re-include it so protocol.json and patients.csv are committed.
+!src/data/
 
 # ── Jupyter Notebooks (optional: remove if you want to commit notebooks) ──────
 # .ipynb_checkpoints/

@@ -1,0 +1,7 @@
+# TrialGuard — Python dependencies
+# Install with:  .venv\Scripts\python.exe -m pip install -r requirements.txt
+
+pandas>=2.0,<3.0        # tables of patient records and deviations
+streamlit>=1.35,<2.0    # web dashboard (used from Phase 5)
+plotly>=5.20,<7.0       # interactive charts (used from Phase 5)
+pytest>=8.0,<9.0        # automated tests
