@@ -8,7 +8,9 @@
 
 ```
 src/
+├── app.py                     ← Streamlit dashboard (display only, no rules)
 ├── config.py                  ← every rule, threshold and weight in one place
+├── check_app.py               ← Phase 5 check: dashboard renders without errors (headless)
 ├── check_data.py              ← Phase 1 check: loads data and prints a summary
 ├── check_deviations.py        ← runs detection + severity and prints examples
 ├── check_risk.py              ← Phase 4 check: site ranking, risk factors, early warnings
@@ -23,17 +25,40 @@ src/
 │   ├── generate_synthetic_data.py  ← recreates patients.csv
 │   └── sample_invalid_upload.csv   ← deliberately broken file for testing validation
 ├── utils/
-│   └── data_loader.py         ← reads + validates protocol and patient CSVs
+│   ├── data_loader.py         ← reads + validates protocol and patient CSVs
+│   ├── dashboard_data.py      ← runs every step and shapes results for the dashboard
+│   └── charts.py              ← Plotly charts used by the dashboard
 └── tests/
     ├── test_data_loader.py         ← Phase 1 tests (pytest)
     ├── test_deviation_detector.py  ← Phase 2 tests (pytest)
     ├── test_severity.py            ← Phase 3 tests (pytest)
     ├── test_risk_scoring.py        ← Phase 4 tests (pytest)
-    └── test_early_warning.py       ← Phase 4 tests (pytest)
+    ├── test_early_warning.py       ← Phase 4 tests (pytest)
+    ├── test_dashboard_data.py      ← Phase 5 tests: dashboard data + charts
+    └── test_app.py                 ← Phase 5 tests: the real page, run headlessly
 ```
 
-Coming in later phases: CAPA reports in `core/`, and `app.py` (Streamlit
-dashboard).
+Coming in a later phase: CAPA reports in `core/`.
+
+## Dashboard
+
+```
+CSV -> data_loader -> deviation_detector -> severity -> risk_scoring
+    -> early_warning -> utils/dashboard_data.py -> app.py (display)
+```
+
+`app.py` contains no detection, severity, scoring or warning rules. It shows:
+
+- **Sidebar:** data source (built-in synthetic data or CSV upload) and site selector
+- **Metric cards:** total sites, patients, deviations, high- and medium-risk sites
+- **Study overview tab:** site risk table, risk score bar chart, sites with
+  early warnings, deviations by type and severity
+- **Site details tab:** score, level, counts, early warnings, top risk factors,
+  risk points by factor, filterable deviation records
+- **How it works tab:** the current rules, read live from `config.py`
+
+Invalid uploads (missing columns, empty or malformed files) show a friendly
+error message instead of a traceback.
 
 ## Deviation detection rules
 
@@ -137,6 +162,12 @@ The exact planted problems are listed in `PLANTED_ISSUES` inside
 ## Commands (Windows PowerShell, from the repository folder)
 
 ```powershell
+# Start the dashboard (opens at http://localhost:8501; stop with Ctrl+C)
+.venv\Scripts\python.exe -m streamlit run src\app.py
+
+# Check the dashboard renders without errors (no browser needed)
+.venv\Scripts\python.exe src\check_app.py
+
 # Recreate the demo dataset
 .venv\Scripts\python.exe src\data\generate_synthetic_data.py
 
