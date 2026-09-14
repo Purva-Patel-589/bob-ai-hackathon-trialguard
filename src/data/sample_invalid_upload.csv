@@ -1,0 +1,5 @@
+patient_id,site,visit,actual_day
+PT-201-01,SITE-201,Visit 1,0
+PT-201-01,SITE-201,Visit 2,15
+PT-201-02,SITE-201,Visit 1,0
+PT-201-02,SITE-201,Visit 2,14
