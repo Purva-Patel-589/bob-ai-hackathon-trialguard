@@ -10,9 +10,10 @@
 src/
 ├── config.py                  ← every rule, threshold and weight in one place
 ├── check_data.py              ← Phase 1 check: loads data and prints a summary
-├── check_deviations.py        ← Phase 2 check: runs detection and prints examples
+├── check_deviations.py        ← runs detection + severity and prints examples
 ├── core/
-│   └── deviation_detector.py  ← compares records with the protocol, lists deviations
+│   ├── deviation_detector.py  ← compares records with the protocol, lists deviations
+│   └── severity.py            ← labels each deviation Major / Minor / Administrative
 ├── data/
 │   ├── protocol.json          ← fictional protocol (visits, windows, dose, prohibited meds)
 │   ├── patients.csv           ← synthetic demo dataset (generated, do not edit by hand)
@@ -22,11 +23,12 @@ src/
 │   └── data_loader.py         ← reads + validates protocol and patient CSVs
 └── tests/
     ├── test_data_loader.py         ← Phase 1 tests (pytest)
-    └── test_deviation_detector.py  ← Phase 2 tests (pytest)
+    ├── test_deviation_detector.py  ← Phase 2 tests (pytest)
+    └── test_severity.py            ← Phase 3 tests (pytest)
 ```
 
-Coming in later phases: severity, risk scoring, early warnings and CAPA
-reports in `core/`, and `app.py` (Streamlit dashboard).
+Coming in later phases: risk scoring, early warnings and CAPA reports in
+`core/`, and `app.py` (Streamlit dashboard).
 
 ## Deviation detection rules
 
@@ -38,8 +40,26 @@ reports in `core/`, and `app.py` (Streamlit dashboard).
 | Prohibited medication | A medication in the cell is on the protocol's prohibited list (case-insensitive; one deviation per drug) |
 | Missing documentation | A visit that took place has a blank `dose_mg` or blank `medication` |
 
-Missed visits are not checked for the other rules. Severity is assigned
-separately (Phase 3).
+Missed visits are not checked for the other rules.
+
+## Severity rules
+
+> Simplified prototype rules — **not** regulatory determinations.
+
+| Deviation type | Severity | Setting in `config.py` |
+|---|---|---|
+| Missed visit | Major | `SEVERITY_BY_DEVIATION_TYPE` |
+| Incorrect dose | Major | `SEVERITY_BY_DEVIATION_TYPE` |
+| Prohibited medication | Major | `SEVERITY_BY_DEVIATION_TYPE` |
+| Missing documentation | Administrative | `SEVERITY_BY_DEVIATION_TYPE` |
+| Out-of-window visit, 1–2 days outside | Administrative | `VISIT_ADMINISTRATIVE_MAX_DAYS_OUTSIDE = 2` |
+| Out-of-window visit, 3–7 days outside | Minor | `VISIT_MINOR_MAX_DAYS_OUTSIDE = 7` |
+| Out-of-window visit, more than 7 days outside | Major | |
+
+`add_severity()` adds two columns after `deviation_type`: `severity` and
+`severity_rule` (a plain-English reason, e.g. "8 day(s) outside window: more
+than 7 days is Major"). If `config.py` contains an inconsistent setting, a
+clear error explains what to fix.
 
 ## Patient CSV format
 
@@ -83,7 +103,7 @@ The exact planted problems are listed in `PLANTED_ISSUES` inside
 # Phase 1 data check
 .venv\Scripts\python.exe src\check_data.py
 
-# Phase 2 deviation detection check
+# Deviation detection + severity check
 .venv\Scripts\python.exe src\check_deviations.py
 
 # Automated tests

@@ -66,18 +66,21 @@ DEVIATION_TYPES = [
 ]
 
 # ---------------------------------------------------------------------------
-# Severity rules (used from Phase 3)
+# Severity rules (used by core/severity.py)
 # Simplified prototype rules — not regulatory determinations.
 # ---------------------------------------------------------------------------
 MAJOR = "Major"
 MINOR = "Minor"
 ADMINISTRATIVE = "Administrative"
 
+# Most serious first (used for sorting and charts)
+SEVERITY_LEVELS = [MAJOR, MINOR, ADMINISTRATIVE]
+
 # How many days OUTSIDE the allowed window a visit can be before it becomes
 # more serious. Example with the defaults below:
-#   1-2 days outside the window  -> Administrative
-#   3-7 days outside the window  -> Minor
-#   8+  days outside the window  -> Major
+#   1-2 days outside the window        -> Administrative
+#   3-7 days outside the window        -> Minor
+#   more than 7 days outside the window -> Major
 VISIT_ADMINISTRATIVE_MAX_DAYS_OUTSIDE = 2
 VISIT_MINOR_MAX_DAYS_OUTSIDE = 7
 
