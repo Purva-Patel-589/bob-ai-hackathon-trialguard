@@ -93,7 +93,13 @@ SEVERITY_BY_DEVIATION_TYPE = {
 }
 
 # ---------------------------------------------------------------------------
-# Site risk score weights (used from Phase 4)
+# Site risk score (used by core/risk_scoring.py)
+#
+#   points for one deviation = SEVERITY_POINTS + DEVIATION_TYPE_BONUS_POINTS
+#   total_points             = sum of deviation points + repeated-pattern bonuses
+#   points_per_patient       = total_points / patients at the site
+#   risk_score               = min(100, points_per_patient / SCORE_CAP_POINTS_PER_PATIENT * 100)
+#                              rounded to a whole number
 # ---------------------------------------------------------------------------
 SEVERITY_POINTS = {
     MAJOR: 10,
@@ -118,16 +124,28 @@ REPEATED_PATTERN_MIN_PATIENTS = 2
 # The cap is fixed on purpose: scores are NOT relative to other sites.
 SCORE_CAP_POINTS_PER_PATIENT = 25
 
-# Risk levels: (level name, highest score in that level)
+# Risk levels: (level name, highest whole-number score in that level)
+#   0-30 LOW, 31-60 MEDIUM, 61-100 HIGH
 RISK_LEVELS = [
     ("LOW", 30),
     ("MEDIUM", 60),
     ("HIGH", 100),
 ]
 
+# How many of the biggest point contributors to list for each site
+TOP_RISK_FACTORS_COUNT = 3
+
 # ---------------------------------------------------------------------------
-# Early warning thresholds (used from Phase 4)
+# Early warning thresholds (used by core/early_warning.py)
+# Warnings explain a site's risk. They never change the risk score.
 # ---------------------------------------------------------------------------
 WARNING_REPEATED_DOSING_MIN = 2          # dosing errors at one site
 WARNING_REPEATED_PROHIBITED_MED_MIN = 2  # prohibited-medication incidents
 WARNING_HIGH_RATE_MULTIPLIER = 2.0       # site rate vs. study-average rate
+
+# Increasing trend: compare deviations at the first half of the protocol
+# visits ("early") with the second half ("later"). Trigger when BOTH:
+#   later >= WARNING_TREND_MULTIPLIER * early
+#   later - early >= WARNING_TREND_MIN_INCREASE
+WARNING_TREND_MULTIPLIER = 2.0
+WARNING_TREND_MIN_INCREASE = 3

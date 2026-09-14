@@ -11,9 +11,12 @@ src/
 ├── config.py                  ← every rule, threshold and weight in one place
 ├── check_data.py              ← Phase 1 check: loads data and prints a summary
 ├── check_deviations.py        ← runs detection + severity and prints examples
+├── check_risk.py              ← Phase 4 check: site ranking, risk factors, early warnings
 ├── core/
 │   ├── deviation_detector.py  ← compares records with the protocol, lists deviations
-│   └── severity.py            ← labels each deviation Major / Minor / Administrative
+│   ├── severity.py            ← labels each deviation Major / Minor / Administrative
+│   ├── risk_scoring.py        ← 0-100 risk score and level for every site
+│   └── early_warning.py       ← explains why a site is (becoming) risky
 ├── data/
 │   ├── protocol.json          ← fictional protocol (visits, windows, dose, prohibited meds)
 │   ├── patients.csv           ← synthetic demo dataset (generated, do not edit by hand)
@@ -24,11 +27,13 @@ src/
 └── tests/
     ├── test_data_loader.py         ← Phase 1 tests (pytest)
     ├── test_deviation_detector.py  ← Phase 2 tests (pytest)
-    └── test_severity.py            ← Phase 3 tests (pytest)
+    ├── test_severity.py            ← Phase 3 tests (pytest)
+    ├── test_risk_scoring.py        ← Phase 4 tests (pytest)
+    └── test_early_warning.py       ← Phase 4 tests (pytest)
 ```
 
-Coming in later phases: risk scoring, early warnings and CAPA reports in
-`core/`, and `app.py` (Streamlit dashboard).
+Coming in later phases: CAPA reports in `core/`, and `app.py` (Streamlit
+dashboard).
 
 ## Deviation detection rules
 
@@ -60,6 +65,41 @@ Missed visits are not checked for the other rules.
 `severity_rule` (a plain-English reason, e.g. "8 day(s) outside window: more
 than 7 days is Major"). If `config.py` contains an inconsistent setting, a
 clear error explains what to fix.
+
+## Site risk score
+
+> Prototype scoring — not a validated risk model.
+
+1. **Points per deviation** = severity points (Major 10, Minor 4,
+   Administrative 1) + type bonus (Incorrect dose +5, Prohibited medication +7,
+   Missed or out-of-window visit +3).
+2. **Repeated-pattern bonus**: +5 for each deviation type seen in 2 or more
+   different patients at the site.
+3. **total_points** = step 1 + step 2.
+4. **points_per_patient** = total_points ÷ patients at the site.
+5. **risk_score** = min(100, points_per_patient ÷ 25 × 100), rounded to a
+   whole number (`SCORE_CAP_POINTS_PER_PATIENT = 25`).
+6. **risk_level**: 0–30 LOW, 31–60 MEDIUM, 61–100 HIGH.
+
+Every point belongs to one risk factor (dosing errors, prohibited medications,
+late or missed visits, missing documentation, repeated patterns). The factor
+points always add up to `total_points`, and the biggest three are listed as the
+site's top risk factors.
+
+## Early warnings
+
+Warnings explain a site's risk; they **never change the score**.
+
+| Warning | Trigger (settings in `config.py`) |
+|---|---|
+| Repeated dosing errors | 2+ dosing deviations at the site |
+| Repeated prohibited medications | 2+ prohibited-medication incidents |
+| Increasing deviation trend | Later visits (second half of schedule) have ≥ 2× the deviations of early visits **and** at least 3 more |
+| Unusually high deviation rate | Deviations per expected visit > 2× the study-wide rate |
+
+Each site also gets a one-sentence headline built from its top risk factors
+and warnings, e.g. *"Repeated dosing deviations and repeated prohibited
+medication incidents are driving elevated site risk."*
 
 ## Patient CSV format
 
@@ -105,6 +145,9 @@ The exact planted problems are listed in `PLANTED_ISSUES` inside
 
 # Deviation detection + severity check
 .venv\Scripts\python.exe src\check_deviations.py
+
+# Site risk scores + early warnings
+.venv\Scripts\python.exe src\check_risk.py
 
 # Automated tests
 .venv\Scripts\python.exe -m pytest src\tests -v
