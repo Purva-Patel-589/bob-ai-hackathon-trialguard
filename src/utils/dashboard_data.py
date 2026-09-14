@@ -164,6 +164,7 @@ def site_details(result, site_id):
         "affected_patients": int(site_deviations["patient_id"].nunique()),
         "breakdown": deviation_breakdown(site_deviations, row),
         "records": deviation_records(site_deviations),
+        "deviations": site_deviations.reset_index(drop=True),  # raw rows, for the CAPA generator
     }
 
 

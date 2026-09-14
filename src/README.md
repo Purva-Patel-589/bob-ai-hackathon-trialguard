@@ -18,7 +18,8 @@ src/
 │   ├── deviation_detector.py  ← compares records with the protocol, lists deviations
 │   ├── severity.py            ← labels each deviation Major / Minor / Administrative
 │   ├── risk_scoring.py        ← 0-100 risk score and level for every site
-│   └── early_warning.py       ← explains why a site is (becoming) risky
+│   ├── early_warning.py       ← explains why a site is (becoming) risky
+│   └── capa_generator.py      ← rule-based CAPA report (Markdown) for one site
 ├── data/
 │   ├── protocol.json          ← fictional protocol (visits, windows, dose, prohibited meds)
 │   ├── patients.csv           ← synthetic demo dataset (generated, do not edit by hand)
@@ -35,16 +36,16 @@ src/
     ├── test_risk_scoring.py        ← Phase 4 tests (pytest)
     ├── test_early_warning.py       ← Phase 4 tests (pytest)
     ├── test_dashboard_data.py      ← Phase 5 tests: dashboard data + charts
-    └── test_app.py                 ← Phase 5 tests: the real page, run headlessly
+    ├── test_app.py                 ← Phase 5-6 tests: the real page, run headlessly
+    └── test_capa_generator.py      ← Phase 6 tests: CAPA reports
 ```
-
-Coming in a later phase: CAPA reports in `core/`.
 
 ## Dashboard
 
 ```
 CSV -> data_loader -> deviation_detector -> severity -> risk_scoring
-    -> early_warning -> utils/dashboard_data.py -> app.py (display)
+    -> early_warning -> capa_generator -> app.py (display)
+                        (utils/dashboard_data.py shapes tables for the page)
 ```
 
 `app.py` contains no detection, severity, scoring or warning rules. It shows:
@@ -59,6 +60,33 @@ CSV -> data_loader -> deviation_detector -> severity -> risk_scoring
 
 Invalid uploads (missing columns, empty or malformed files) show a friendly
 error message instead of a traceback.
+
+## CAPA reports
+
+> Prototype recommendations, not regulatory advice.
+
+`core/capa_generator.py` builds a Markdown CAPA report for one site from the
+already-calculated site risk row, early warnings and deviations. It does not
+re-score or re-detect anything. The report contains: header, executive
+summary, early warnings, detected deviations, affected patients, likely
+contributing issues (rule-based hypotheses), corrective actions, preventive
+actions, a monitoring recommendation and disclaimers.
+
+All wording comes from editable tables at the top of the module:
+
+| Table | What it controls |
+|---|---|
+| `ISSUE_RULES_BY_FACTOR` | Issue, corrective and preventive actions for dosing, prohibited medications, late/missed visits, missing documentation |
+| `ISSUE_RULES_BY_WARNING` | Extra issue and actions for the increasing-trend and high-rate warnings |
+| `MIN_RISK_SHARE_FOR_ISSUE_PCT` (10) | A factor with less than 10% of the site's risk points is listed as a smaller contributor to correct individually, not as a process issue (unless its repeated-pattern warning fired) |
+| `MONITORING_BY_LEVEL` | Monitoring recommendation for HIGH / MEDIUM / LOW |
+
+A site with no deviations and no warnings gets: *"No CAPA actions are
+currently indicated for this site based on the available demo data."*
+
+In the dashboard the report appears under **Site details → CAPA report**, with
+a **Download CAPA report** button. The report is created in memory; no files
+are written.
 
 ## Deviation detection rules
 

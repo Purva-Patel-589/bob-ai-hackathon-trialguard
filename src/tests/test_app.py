@@ -96,6 +96,59 @@ def test_clean_site_view(app):
     assert "No deviations detected at this site." in successes
 
 
+# ---------------------------------------------------------------------------
+# Phase 6: CAPA section
+# ---------------------------------------------------------------------------
+def capa_report_text(app):
+    reports = [m.value for m in app.markdown if "CAPA / Corrective Action Report" in str(m.value)]
+    assert len(reports) == 1, "expected exactly one CAPA report on the page"
+    return reports[0]
+
+
+def download_labels(app):
+    return [button.proto.label for button in app.get("download_button")]
+
+
+def test_capa_section_for_site_104(app):
+    select_site(app, "SITE-104")
+    assert "CAPA report" in [s.value for s in app.subheader]
+    assert "Download CAPA report" in download_labels(app)
+    report = capa_report_text(app)
+    assert "- **Risk score:** 68 / 100" in report
+    assert "Dosing procedure or dose verification" in report
+    assert "Medication eligibility/review process" in report
+    assert "Verify recent dosing records." in report
+    assert "Recommend prompt enhanced monitoring/review of this site." in report
+    assert "Prototype recommendations, not regulatory advice." in report
+
+
+def test_capa_section_for_site_107(app):
+    select_site(app, "SITE-107")
+    assert "Download CAPA report" in download_labels(app)
+    report = capa_report_text(app)
+    assert "- **Risk score:** 52 / 100" in report
+    assert "Visit scheduling or site follow-up capacity" in report
+    assert "Review visit scheduling and patient follow-up." in report
+    assert "Recommend increased remote monitoring and closer follow-up." in report
+    assert "Verify recent dosing records." not in report
+
+
+def test_capa_section_for_clean_site_105(app):
+    select_site(app, "SITE-105")
+    assert "CAPA report" in [s.value for s in app.subheader]
+    message = "No CAPA actions are currently indicated for this site based on the available demo data."
+    assert message in all_text(app.success)
+    assert "Download CAPA report" in download_labels(app)
+    report = capa_report_text(app)
+    assert message in report
+    assert "Corrective actions" not in report
+
+
+def test_no_capa_section_when_all_sites_selected(app):
+    assert "CAPA report" not in [s.value for s in app.subheader]
+    assert download_labels(app) == []
+
+
 def test_upload_mode_without_file_asks_for_upload(app):
     app.sidebar.radio[0].set_value("Upload a CSV").run()
     assert not app.exception

@@ -13,9 +13,12 @@ preparation lives in src/utils/dashboard_data.py:
 PROTOTYPE: synthetic data, simplified rules. Not for clinical decision-making.
 """
 
+from datetime import date
+
 import streamlit as st
 
 import config
+from core import capa_generator
 from utils import charts
 from utils import dashboard_data as data
 
@@ -205,6 +208,8 @@ def show_site_details_tab(result, site_id):
             st.markdown("**Risk points by factor**")
             st.plotly_chart(charts.risk_factor_chart(details["breakdown"]), width="stretch")
 
+    show_capa_section(site_id, details)
+
     st.subheader("Deviation records")
     records = details["records"]
     if records.empty:
@@ -220,6 +225,34 @@ def show_site_details_tab(result, site_id):
     shown = data.filter_records(records, chosen_severities, chosen_types)
     st.caption(f"Showing {len(shown)} of {len(records)} deviation(s).")
     st.dataframe(shown, hide_index=True, width="stretch")
+
+
+def show_capa_section(site_id, details):
+    """CAPA report for the selected site: generated in memory, shown, and offered as a download."""
+    st.subheader("CAPA report")
+    report = capa_generator.build_capa_report(
+        details["row"], details["warnings"], details["deviations"], generated_on=date.today().isoformat()
+    )
+    capa_needed = capa_generator.needs_capa(details["row"], details["warnings"])
+
+    if capa_needed:
+        st.caption(
+            f"Rule-based corrective and preventive actions for {site_id}. "
+            f"{capa_generator.PROTOTYPE_NOTICE}"
+        )
+    else:
+        st.success(capa_generator.NO_CAPA_MESSAGE, icon="✅")
+
+    st.download_button(
+        "Download CAPA report",
+        data=report.encode("utf-8"),
+        file_name=capa_generator.capa_file_name(site_id),
+        mime="text/markdown",
+        icon="📄",
+    )
+    with st.expander("View CAPA report", expanded=capa_needed):
+        with st.container(border=True):
+            st.markdown(report)
 
 
 def show_rules_tab():

@@ -18,7 +18,7 @@ SITES_TO_CHECK = ["SITE-104", "SITE-107", "SITE-105"]
 
 
 def main():
-    print("TrialGuard - Phase 5 dashboard check (headless)")
+    print("TrialGuard - dashboard + CAPA check (headless)")
     print("=" * 48)
 
     try:
@@ -59,6 +59,14 @@ def main():
                 print(f"  Warning: {warning}")
         else:
             print("  " + "; ".join(str(s.value) for s in app.success))
+
+        capa_reports = [m.value for m in app.markdown if "CAPA / Corrective Action Report" in str(m.value)]
+        download_labels = [button.proto.label for button in app.get("download_button")]
+        if len(capa_reports) != 1 or "Download CAPA report" not in download_labels:
+            print(f"FAILED: CAPA report or download button missing for {site_id}")
+            return 1
+        monitoring = capa_reports[0].split("### Monitoring recommendation")[1].strip().splitlines()[0]
+        print(f"  CAPA report shown with download button; monitoring: {monitoring}")
 
     print("\nDashboard check finished OK.")
     return 0
