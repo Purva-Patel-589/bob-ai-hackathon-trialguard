@@ -18,7 +18,8 @@ src/
 │   ├── deviation_detector.py  ← compares records with the protocol, lists deviations
 │   ├── severity.py            ← labels each deviation Major / Minor / Administrative
 │   ├── risk_scoring.py        ← 0-100 risk score and level for every site
-│   └── early_warning.py       ← explains why a site is (becoming) risky
+│   ├── early_warning.py       ← explains why a site is (becoming) risky
+│   └── capa_generator.py      ← rule-based CAPA report (Markdown) for one site
 ├── data/
 │   ├── protocol.json          ← fictional protocol (visits, windows, dose, prohibited meds)
 │   ├── patients.csv           ← synthetic demo dataset (generated, do not edit by hand)
@@ -35,16 +36,16 @@ src/
     ├── test_risk_scoring.py        ← Phase 4 tests (pytest)
     ├── test_early_warning.py       ← Phase 4 tests (pytest)
     ├── test_dashboard_data.py      ← Phase 5 tests: dashboard data + charts
-    └── test_app.py                 ← Phase 5 tests: the real page, run headlessly
+    ├── test_app.py                 ← Phase 5-6 tests: the real page, run headlessly
+    └── test_capa_generator.py      ← Phase 6 tests: CAPA reports
 ```
-
-Coming in a later phase: CAPA reports in `core/`.
 
 ## Dashboard
 
 ```
 CSV -> data_loader -> deviation_detector -> severity -> risk_scoring
-    -> early_warning -> utils/dashboard_data.py -> app.py (display)
+    -> early_warning -> capa_generator -> app.py (display)
+                        (utils/dashboard_data.py shapes tables for the page)
 ```
 
 `app.py` contains no detection, severity, scoring or warning rules. It shows:
@@ -57,8 +58,54 @@ CSV -> data_loader -> deviation_detector -> severity -> risk_scoring
   risk points by factor, filterable deviation records
 - **How it works tab:** the current rules, read live from `config.py`
 
-Invalid uploads (missing columns, empty or malformed files) show a friendly
-error message instead of a traceback.
+### Upload validation and data preparation
+
+Uploads never show a Python traceback. `utils/data_loader.py` handles:
+
+| Problem | What happens |
+|---|---|
+| Missing required columns | Error listing missing and found columns (with a hint for semicolon/tab files) |
+| Empty file, headers only | Error |
+| Rows with more values than headers | Error (instead of silently shifting columns) |
+| Text in `actual_day` / `dose_mg`, blank IDs | Error with CSV row numbers |
+| Excel "CSV UTF-8" or Windows-1252 files | Read normally |
+| Visit names in different capitals/spacing (`visit  2`) | Matched to the protocol, with a note |
+| Visit names not in the protocol | Those records are ignored, with a note (error if none match) |
+| Exact duplicate records | Counted once, with a note |
+| Same patient/visit with different values | Kept, with a warning |
+| `N/A`, `-`, `null`… in `medication` | Warning: only `None` means no medication |
+| Negative numbers, patient at two sites | Warning |
+
+Notes and warnings are shown at the top of the dashboard.
+
+## CAPA reports
+
+> Prototype recommendations, not regulatory advice.
+
+`core/capa_generator.py` builds a Markdown CAPA report for one site from the
+already-calculated site risk row, early warnings and deviations. It does not
+re-score or re-detect anything. The report contains: header, executive
+summary, early warnings, detected deviations, affected patients, likely
+contributing issues (rule-based hypotheses), corrective actions, preventive
+actions, a monitoring recommendation and disclaimers.
+
+All wording comes from editable tables at the top of the module:
+
+| Table | What it controls |
+|---|---|
+| `ISSUE_RULES_BY_FACTOR` | Issue, corrective and preventive actions for dosing, prohibited medications, late/missed visits, missing documentation |
+| `ISSUE_RULES_BY_WARNING` | Extra issue and actions for the increasing-trend and high-rate warnings |
+| `MIN_RISK_SHARE_FOR_ISSUE_PCT` (10) | A factor with less than 10% of the site's risk points is listed as a smaller contributor to correct individually, not as a process issue (unless its repeated-pattern warning fired) |
+| `MONITORING_BY_LEVEL` | Monitoring recommendation for HIGH / MEDIUM / LOW |
+
+A site with no deviations and no warnings gets: *"No CAPA actions are
+currently indicated for this site based on the available demo data."*
+
+In the dashboard the report appears under **Site details → CAPA report**, with
+a **Download CAPA report** button (`trialguard_capa_<SITE_ID>.md`). The report
+is created in memory; no files are written. On screen it is shown with smaller
+headings (`build_capa_report(..., for_screen=True)`); the downloaded Markdown
+keeps the full document title.
 
 ## Deviation detection rules
 
@@ -71,6 +118,22 @@ error message instead of a traceback.
 | Missing documentation | A visit that took place has a blank `dose_mg` or blank `medication` |
 
 Missed visits are not checked for the other rules.
+
+### Completed vs ongoing trials
+
+A visit with **no record at all** is handled according to the trial status
+(`assume_schedule_complete` in `detect_deviations()`):
+
+| Trial status | Unrecorded visit counts as missed when… | Used by |
+|---|---|---|
+| Completed (default) | always | built-in demo data |
+| Ongoing | the patient has a record for a **later** visit | CSV upload, if the user picks "Ongoing" |
+
+In ongoing mode, visits after a patient's last record are "not yet due" and
+the dashboard shows how many there are. Trade-off: a patient who dropped out
+is not flagged for visits they never reached — add a row with a blank
+`actual_day` to record a visit that was definitely missed. (A record with a
+blank `actual_day` is always a missed visit.)
 
 ## Severity rules
 

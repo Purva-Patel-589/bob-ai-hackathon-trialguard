@@ -49,7 +49,8 @@ def site_risk_chart(site_risk, selected_site=None):
             orientation="h",
             name=level,  # the legend already shows a colour swatch, so no icon here
             marker={"color": RISK_LEVEL_COLORS.get(level, SERIES_COLOR), "opacity": opacity, "cornerradius": 4},
-            text=subset["risk_score"],
+            # Score AND level word on every bar, so the chart does not rely on colour
+            text=[f"{score} {level}" for score in subset["risk_score"]],
             textposition="outside",
             cliponaxis=False,
             customdata=subset[["risk_level", "total_deviations", "patients"]],
@@ -70,7 +71,7 @@ def site_risk_chart(site_risk, selected_site=None):
         margin={"l": 10, "r": 30, "t": 70, "b": 40},
         legend={"orientation": "h", "yanchor": "bottom", "y": 1.0, "xanchor": "left", "x": 0,
                 "title": {"text": ""}},
-        xaxis={"title": "Risk score (0-100)", "range": [0, 108], "tickvals": [0, 30, 60, 100]},
+        xaxis={"title": "Risk score (0-100)", "range": [0, 125], "tickvals": [0, 30, 60, 100]},
         yaxis={"title": None, "categoryorder": "array", "categoryarray": data["site_id"].tolist()},
     )
     return fig

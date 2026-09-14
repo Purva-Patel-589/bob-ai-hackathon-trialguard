@@ -10,6 +10,7 @@ import importlib.util
 import io
 import json
 
+import pandas as pd
 import pytest
 
 import config
@@ -18,6 +19,7 @@ from utils.data_loader import (
     get_data_warnings,
     load_patients,
     load_protocol,
+    prepare_patient_records,
     summarize_patients,
 )
 
@@ -178,3 +180,70 @@ def test_warnings_for_suspicious_but_usable_data():
     assert "more than once" in joined
     assert "more than one site" in joined
     assert "negative" in joined
+
+
+# ---------------------------------------------------------------------------
+# Phase 7: parsing robustness and record preparation
+# ---------------------------------------------------------------------------
+def schedule_rows(patient="PT-1", site="SITE-1"):
+    return "".join(f"{patient},{site},Visit {n},{day},10,None\n" for n, day in [(1, 0), (2, 14), (3, 28), (4, 56)])
+
+
+def test_extra_value_in_first_record_is_rejected_not_shifted():
+    with pytest.raises(DataValidationError, match="more values than there are column headers"):
+        load_patients(csv_file(HEADER + "PT-1,SITE-1,Visit 1,0,10,None,EXTRA\n"))
+
+
+def test_extra_value_in_later_record_is_rejected():
+    with pytest.raises(DataValidationError, match="Check for extra commas"):
+        load_patients(csv_file(HEADER + "PT-1,SITE-1,Visit 1,0,10,None\nPT-1,SITE-1,Visit 2,14,10,None,EXTRA\n"))
+
+
+def test_quoted_value_with_comma_is_fine():
+    patients = load_patients(csv_file(HEADER + 'PT-1,SITE-1,Visit 1,0,10,"DrugA, extended release"\n'))
+    assert patients.loc[0, "medication"] == "DrugA, extended release"
+
+
+def test_semicolon_file_gets_a_hint():
+    with pytest.raises(DataValidationError, match="semicolons"):
+        load_patients(csv_file(HEADER.replace(",", ";") + "PT-1;SITE-1;Visit 1;0;10;None\n"))
+
+
+def test_windows_encoded_bytes_are_read():
+    raw = (HEADER + "PT-1,SITE-1,Visit 1,0,10,Paracétamol\n").encode("cp1252")
+    assert load_patients(io.BytesIO(raw)).loc[0, "medication"] == "Paracétamol"
+
+
+def test_excel_utf8_marker_is_ignored():
+    raw = ("\ufeff" + HEADER + "PT-1,SITE-1,Visit 1,0,10,None\n").encode("utf-8")
+    assert list(load_patients(io.BytesIO(raw)).columns) == config.REQUIRED_COLUMNS
+
+
+def test_prepare_keeps_demo_data_unchanged():
+    patients = load_patients()
+    prepared, notes = prepare_patient_records(patients, load_protocol())
+    assert notes == []
+    pd.testing.assert_frame_equal(prepared, patients)
+
+
+def test_prepare_matches_visit_names_and_drops_unknown_and_duplicates():
+    text = HEADER + schedule_rows().replace("Visit 2", "visit 2") + "PT-1,SITE-1,Visit 9,5,10,None\n" + "PT-1,SITE-1,Visit 3,28,10,None\n"
+    prepared, notes = prepare_patient_records(load_patients(csv_file(text)), load_protocol())
+    assert sorted(prepared["visit"]) == ["Visit 1", "Visit 2", "Visit 3", "Visit 4"]
+    assert len(notes) == 3
+    assert "Matched 1 visit name(s)" in notes[0]
+    assert "Ignored 1 record(s)" in notes[1] and "rows 6" in notes[1]   # row numbers match the file
+    assert "Removed 1 exact duplicate" in notes[2] and "rows 7" in notes[2]
+
+
+def test_prepare_with_no_matching_visits_raises():
+    text = HEADER + "PT-1,SITE-1,Week 1,0,10,None\n"
+    with pytest.raises(DataValidationError, match="no visit name matches the protocol"):
+        prepare_patient_records(load_patients(csv_file(text)), load_protocol())
+
+
+def test_warning_row_numbers_stay_correct_after_rows_are_removed():
+    text = HEADER + "PT-1,SITE-1,Visit 9,0,10,None\n" + "PT-1,SITE-1,Visit 1,-2,10,None\n"
+    prepared, _ = prepare_patient_records(load_patients(csv_file(text)), load_protocol())
+    warnings = get_data_warnings(prepared, load_protocol())
+    assert any("negative values in row(s) 3" in warning for warning in warnings)

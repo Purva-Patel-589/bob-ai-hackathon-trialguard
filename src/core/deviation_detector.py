@@ -10,9 +10,16 @@ This module only DETECTS deviations. It does not decide how serious they are
 Rules
 -----
 1. Missed visit
-   - The protocol expects a visit but the patient has no record for it, or
-   - the record exists but actual_day is blank.
-   (The demo assumes every patient has reached the end of the visit schedule.)
+   - The record exists but actual_day is blank, or
+   - the protocol expects a visit but the patient has no record for it.
+     Whether an unrecorded visit counts depends on `assume_schedule_complete`:
+       True  (default, used by the demo data): every patient has finished the
+             schedule, so EVERY unrecorded visit is missed.
+       False (trial still ongoing): an unrecorded visit is missed only if the
+             patient has a record for a LATER visit. Visits after the
+             patient's last record are "not yet due" and are not flagged.
+             Trade-off: a patient who dropped out is not flagged for the visits
+             they never reached - add a row with a blank actual_day for those.
 2. Out-of-window visit
    - actual_day is earlier than (expected_day - window_days) or later than
      (expected_day + window_days). The number of days outside is recorded.
@@ -27,8 +34,9 @@ Rules
      ("None" means no other medication and is NOT a deviation.)
 
 A missed visit is not checked for rules 2-5, because the visit did not happen.
-Records whose visit name is not in the protocol are skipped (the data loader
-already warns about them).
+Records whose visit name is not in the protocol are skipped. (The dashboard
+removes them beforehand with data_loader.prepare_patient_records() and tells
+the user.)
 
 PROTOTYPE NOTICE: simplified hackathon rules on synthetic data. Not a
 regulatory determination and not for real clinical decisions.
@@ -62,10 +70,11 @@ def run_detection(patients_source=config.DEMO_PATIENTS_PATH, protocol_path=confi
     return detect_deviations(patients, protocol)
 
 
-def detect_deviations(patients, protocol):
+def detect_deviations(patients, protocol, assume_schedule_complete=True):
     """
     Compare patient records (a DataFrame from load_patients) with the protocol.
     Returns a DataFrame with one row per deviation, using DEVIATION_COLUMNS.
+    See rule 1 above for `assume_schedule_complete`.
     """
     visits_by_name = {visit["visit"]: visit for visit in protocol["visits"]}
     deviations = []
@@ -78,7 +87,7 @@ def detect_deviations(patients, protocol):
         deviations.extend(check_visit_record(record, visit, protocol))
 
     # Rule 1 for visits with no record at all
-    deviations.extend(find_missing_visit_records(patients, protocol))
+    deviations.extend(find_missing_visit_records(patients, protocol, assume_schedule_complete))
 
     return _to_sorted_table(deviations, protocol)
 
@@ -224,31 +233,57 @@ def split_medications(cell):
 # ---------------------------------------------------------------------------
 # Visits with no record at all
 # ---------------------------------------------------------------------------
-def find_missing_visit_records(patients, protocol):
-    """Flag every protocol visit that a patient has no record for."""
+def find_missing_visit_records(patients, protocol, assume_schedule_complete=True):
+    """
+    Flag protocol visits that a patient has no record for.
+    With assume_schedule_complete=False, visits after the patient's last
+    recorded visit are skipped (not yet due) - see rule 1 at the top.
+    """
     deviations = []
+    for record, visit, after_last_record in unrecorded_visits(patients, protocol):
+        if after_last_record and not assume_schedule_complete:
+            continue
+        deviations.append(_deviation(
+            record,
+            config.MISSED_VISIT,
+            expected=_describe_window(visit),
+            actual="No record",
+            explanation=(
+                f"No record exists for {visit['visit']} "
+                f"(expected around day {_format_number(visit['expected_day'])})."
+            ),
+        ))
+    return deviations
+
+
+def count_visits_not_yet_due(patients, protocol):
+    """How many unrecorded visits come after each patient's last recorded visit."""
+    return sum(1 for _, _, after_last_record in unrecorded_visits(patients, protocol) if after_last_record)
+
+
+def unrecorded_visits(patients, protocol):
+    """
+    Yield (record, visit, after_last_record) for every protocol visit a patient
+    has no record for. after_last_record is True when the patient has no record
+    for this visit or any later visit in the schedule.
+    """
     if patients.empty:
-        return deviations
+        return
 
     site_by_patient = patients.groupby("patient_id")["site_id"].first()
     recorded_visits = patients.groupby("patient_id")["visit"].apply(set)
+    schedule = protocol["visits"]
 
     for patient_id, site_id in site_by_patient.items():
-        for visit in protocol["visits"]:
-            if visit["visit"] in recorded_visits[patient_id]:
+        recorded = recorded_visits[patient_id]
+        positions = [number for number, visit in enumerate(schedule) if visit["visit"] in recorded]
+        last_recorded_position = max(positions) if positions else -1
+
+        for number, visit in enumerate(schedule):
+            if visit["visit"] in recorded:
                 continue
             record = {"patient_id": patient_id, "site_id": site_id, "visit": visit["visit"]}
-            deviations.append(_deviation(
-                record,
-                config.MISSED_VISIT,
-                expected=_describe_window(visit),
-                actual="No record",
-                explanation=(
-                    f"No record exists for {visit['visit']} "
-                    f"(expected around day {_format_number(visit['expected_day'])})."
-                ),
-            ))
-    return deviations
+            yield record, visit, number > last_recorded_position
 
 
 # ---------------------------------------------------------------------------

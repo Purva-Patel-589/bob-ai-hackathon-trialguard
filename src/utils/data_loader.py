@@ -16,6 +16,7 @@ can be shown directly to the user.
 """
 
 import json
+import warnings as python_warnings  # renamed: get_data_warnings() has its own 'warnings' list
 from pathlib import Path
 
 import pandas as pd
@@ -24,6 +25,11 @@ import config
 
 # How many example row numbers to show in an error message
 MAX_EXAMPLE_ROWS = 5
+
+# Medication values that probably mean "no medication" but are not the word
+# config.NO_MEDICATION_VALUE ("None"). They are still treated as medication
+# names, but the user gets a warning.
+NO_MEDICATION_LOOKALIKES = {"na", "n/a", "-", "--", "null", "nil", "nan", "no", "nothing", "0"}
 
 
 class DataValidationError(Exception):
@@ -114,31 +120,14 @@ def load_patients(source=config.DEMO_PATIENTS_PATH):
       - actual_day and dose_mg are numbers (blank cells become NaN)
       - medication is text; "None" stays as the word "None"
     """
-    try:
-        # dtype=str + keep_default_na=False: read every cell as plain text.
-        # Without this, pandas would silently turn the word "None" into a
-        # missing value, and we could no longer tell "no medication" apart
-        # from "medication not documented".
-        patients = pd.read_csv(source, dtype=str, keep_default_na=False)
-    except FileNotFoundError as error:
-        raise DataValidationError(f"Patient file not found: {source}") from error
-    except pd.errors.EmptyDataError as error:
-        raise DataValidationError("The patient file is empty.") from error
-    except pd.errors.ParserError as error:
-        raise DataValidationError(
-            f"The patient file could not be read as a CSV file: {error}"
-        ) from error
-    except UnicodeDecodeError as error:
-        raise DataValidationError(
-            "The patient file could not be read. Please save it as a UTF-8 CSV file."
-        ) from error
+    patients = _read_csv_as_text(source)
 
     # Tidy column names: " Patient_ID " -> "patient_id"
     patients.columns = [str(column).strip().lower() for column in patients.columns]
 
     missing_columns = [c for c in config.REQUIRED_COLUMNS if c not in patients.columns]
     if missing_columns:
-        raise DataValidationError(
+        message = (
             "The patient file is missing required column(s): "
             + ", ".join(missing_columns)
             + ".\nColumns found: "
@@ -147,6 +136,12 @@ def load_patients(source=config.DEMO_PATIENTS_PATH):
             + ", ".join(config.REQUIRED_COLUMNS)
             + "."
         )
+        if len(patients.columns) == 1 and (";" in patients.columns[0] or "\t" in patients.columns[0]):
+            message += (
+                "\nTip: this file seems to use semicolons or tabs between values. "
+                "Save it as a comma-separated CSV and upload it again."
+            )
+        raise DataValidationError(message)
 
     if patients.empty:
         raise DataValidationError("The patient file has column headers but no records.")
@@ -179,16 +174,126 @@ def load_patients(source=config.DEMO_PATIENTS_PATH):
     return patients
 
 
+def _read_csv_as_text(source):
+    """
+    Read the CSV with every cell as plain text.
+
+    Tries UTF-8 first (this also handles the invisible marker Excel adds to
+    "CSV UTF-8" files), then Windows-1252, the default for Excel's plain
+    "CSV (Comma delimited)" on Windows.
+    """
+    try:
+        return _read_csv_with_encoding(source, "utf-8-sig")
+    except UnicodeDecodeError:
+        if hasattr(source, "seek"):
+            source.seek(0)  # an uploaded file must be rewound before reading it again
+        try:
+            return _read_csv_with_encoding(source, "cp1252")
+        except UnicodeDecodeError as error:
+            raise DataValidationError(
+                "The patient file could not be read. Please save it as a UTF-8 CSV file."
+            ) from error
+
+
+def _read_csv_with_encoding(source, encoding):
+    try:
+        with python_warnings.catch_warnings():
+            # pandas only *warns* when the first record has more values than
+            # the header; treat that as an error instead of silently dropping data
+            python_warnings.simplefilter("error", pd.errors.ParserWarning)
+            # dtype=str + keep_default_na=False: read every cell as plain text.
+            # Without this, pandas would silently turn the word "None" into a
+            # missing value, and we could no longer tell "no medication" apart
+            # from "medication not documented".
+            # index_col=False: never use the first column as row labels.
+            return pd.read_csv(source, dtype=str, keep_default_na=False, index_col=False, encoding=encoding)
+    except FileNotFoundError as error:
+        raise DataValidationError(f"Patient file not found: {source}") from error
+    except pd.errors.EmptyDataError as error:
+        raise DataValidationError("The patient file is empty.") from error
+    except (pd.errors.ParserError, pd.errors.ParserWarning) as error:
+        raise DataValidationError(
+            "The patient file could not be read as a CSV table: some rows have more values "
+            "than there are column headers. Check for extra commas (text that contains a "
+            f"comma must be in quotes). Details: {str(error).strip()}"
+        ) from error
+
+
 def _example_rows(mask):
     """
     Turn a True/False column into readable CSV row numbers.
-    Row 1 is the header, so the first record is row 2.
+    Row 1 is the header, so the record with row label 0 is row 2. Row labels
+    are kept when records are removed, so the numbers still match the file.
     """
-    row_numbers = [str(position + 2) for position, flagged in enumerate(mask.tolist()) if flagged]
+    row_numbers = [str(label + 2) for label in mask[mask].index]
     text = ", ".join(row_numbers[:MAX_EXAMPLE_ROWS])
     if len(row_numbers) > MAX_EXAMPLE_ROWS:
         text += f" (and {len(row_numbers) - MAX_EXAMPLE_ROWS} more)"
     return text
+
+
+def prepare_patient_records(patients, protocol):
+    """
+    Get validated records ready for analysis. Returns (prepared_records, notes).
+
+    - Visit names are matched to the protocol ignoring capitals and extra
+      spaces ("visit  2" -> "Visit 2").
+    - Records whose visit name is not in the protocol are left out, because
+      they cannot be compared with the schedule.
+    - Exact duplicate records (every column identical) are kept only once.
+
+    `notes` lists every change in plain English. Row labels are kept so
+    warnings still point at the right CSV rows. Raises DataValidationError if
+    no records are left.
+    """
+    if patients.empty:
+        raise DataValidationError("The patient file has no records to analyse.")
+
+    notes = []
+    protocol_names = [visit["visit"] for visit in protocol["visits"]]
+    name_by_key = {_visit_key(name): name for name in protocol_names}
+
+    matched_names = patients["visit"].map(lambda name: name_by_key.get(_visit_key(name)))
+    unknown = matched_names.isna()
+
+    renamed = ~unknown & (matched_names != patients["visit"])
+    if renamed.any():
+        examples = patients.loc[renamed, "visit"].drop_duplicates().head(3).tolist()
+        notes.append(
+            f"Matched {int(renamed.sum())} visit name(s) to the protocol ignoring capitals and spaces "
+            f"(for example '{examples[0]}' was read as '{name_by_key[_visit_key(examples[0])]}')."
+        )
+
+    if unknown.all():
+        found = ", ".join(sorted(patients["visit"].unique())[:MAX_EXAMPLE_ROWS])
+        raise DataValidationError(
+            "None of the records can be analysed because no visit name matches the protocol.\n"
+            f"Visit names found: {found}.\n"
+            f"Protocol visit names: {', '.join(protocol_names)}."
+        )
+    if unknown.any():
+        ignored = ", ".join(sorted(patients.loc[unknown, "visit"].unique())[:MAX_EXAMPLE_ROWS])
+        notes.append(
+            f"Ignored {int(unknown.sum())} record(s) whose visit name is not in the protocol "
+            f"({ignored}; rows {_example_rows(unknown)}). Protocol visit names: {', '.join(protocol_names)}."
+        )
+
+    prepared = patients.assign(visit=matched_names)[~unknown]
+
+    exact_duplicates = prepared.duplicated(subset=config.REQUIRED_COLUMNS, keep="first")
+    if exact_duplicates.any():
+        notes.append(
+            f"Removed {int(exact_duplicates.sum())} exact duplicate record(s) "
+            f"(rows {_example_rows(exact_duplicates)}); each record is counted once."
+        )
+        prepared = prepared[~exact_duplicates]
+
+    return prepared, notes
+
+
+def _visit_key(name):
+    """'  visit   2 ' -> 'visit 2' (for matching visit names)."""
+    return " ".join(str(name).split()).lower()
 
 
 def get_data_warnings(patients, protocol):
@@ -210,8 +315,17 @@ def get_data_warnings(patients, protocol):
     if duplicates.any():
         count = patients.loc[duplicates, ["patient_id", "visit"]].drop_duplicates().shape[0]
         warnings.append(
-            f"{count} patient/visit combination(s) appear more than once "
-            f"(rows {_example_rows(duplicates)})."
+            f"{count} patient/visit combination(s) appear more than once with different values "
+            f"(rows {_example_rows(duplicates)}). Each record is checked separately."
+        )
+
+    lookalikes = patients["medication"].str.lower().isin(NO_MEDICATION_LOOKALIKES)
+    if lookalikes.any():
+        values = ", ".join(f"'{value}'" for value in patients.loc[lookalikes, "medication"].unique())
+        warnings.append(
+            f"Medication value(s) {values} in row(s) {_example_rows(lookalikes)} look like "
+            f"'no medication'. Only '{config.NO_MEDICATION_VALUE}' means no medication; other text "
+            "is treated as a medication name."
         )
 
     sites_per_patient = patients.groupby("patient_id")["site_id"].nunique()
