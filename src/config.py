@@ -48,6 +48,24 @@ NO_MEDICATION_VALUE = "None"
 MEDICATION_SEPARATOR = ";"
 
 # ---------------------------------------------------------------------------
+# Deviation types (used by core/deviation_detector.py)
+# Defined once here so every module spells them the same way.
+# ---------------------------------------------------------------------------
+MISSED_VISIT = "Missed visit"
+OUT_OF_WINDOW_VISIT = "Out-of-window visit"
+INCORRECT_DOSE = "Incorrect dose"
+PROHIBITED_MEDICATION = "Prohibited medication"
+MISSING_DOCUMENTATION = "Missing documentation"
+
+DEVIATION_TYPES = [
+    MISSED_VISIT,
+    OUT_OF_WINDOW_VISIT,
+    INCORRECT_DOSE,
+    PROHIBITED_MEDICATION,
+    MISSING_DOCUMENTATION,
+]
+
+# ---------------------------------------------------------------------------
 # Severity rules (used from Phase 3)
 # Simplified prototype rules — not regulatory determinations.
 # ---------------------------------------------------------------------------
@@ -64,11 +82,11 @@ VISIT_ADMINISTRATIVE_MAX_DAYS_OUTSIDE = 2
 VISIT_MINOR_MAX_DAYS_OUTSIDE = 7
 
 SEVERITY_BY_DEVIATION_TYPE = {
-    "Missed visit": MAJOR,
-    "Incorrect dose": MAJOR,
-    "Prohibited medication": MAJOR,
-    "Missing documentation": ADMINISTRATIVE,
-    # "Out-of-window visit" is decided by the day thresholds above.
+    MISSED_VISIT: MAJOR,
+    INCORRECT_DOSE: MAJOR,
+    PROHIBITED_MEDICATION: MAJOR,
+    MISSING_DOCUMENTATION: ADMINISTRATIVE,
+    # OUT_OF_WINDOW_VISIT is decided by the day thresholds above.
 }
 
 # ---------------------------------------------------------------------------
@@ -82,10 +100,10 @@ SEVERITY_POINTS = {
 
 # Extra points added on top of the severity points for certain types
 DEVIATION_TYPE_BONUS_POINTS = {
-    "Incorrect dose": 5,
-    "Prohibited medication": 7,
-    "Missed visit": 3,
-    "Out-of-window visit": 3,
+    INCORRECT_DOSE: 5,
+    PROHIBITED_MEDICATION: 7,
+    MISSED_VISIT: 3,
+    OUT_OF_WINDOW_VISIT: 3,
 }
 
 # +5 points for each deviation type seen in at least this many different
