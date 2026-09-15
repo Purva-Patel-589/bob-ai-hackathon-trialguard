@@ -7,6 +7,11 @@
 .env
 .env.local
 .env.production
+.env.*
+# ...but keep the template's example file (it contains no real values)
+!.env.example
+# Streamlit's local secrets file (TrialGuard does not need one)
+.streamlit/secrets.toml
 *.key
 *.pem
 *.p12
@@ -15,6 +20,7 @@ secrets/
 # ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
+*.pyc
 *.pyo
 .Python
 venv/

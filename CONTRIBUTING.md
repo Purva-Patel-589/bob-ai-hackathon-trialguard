@@ -1,3 +1,52 @@
+# Contributing
+
+This file has two parts:
+
+1. **[Contributing to TrialGuard](#contributing-to-trialguard)** — how to make changes to this project.
+2. **[How to Submit Your Hackathon Entry](#how-to-submit-your-hackathon-entry)** — the original
+   instructions from the hackathon template (kept unchanged).
+
+---
+
+## Contributing to TrialGuard
+
+TrialGuard is a hackathon proof-of-concept that uses **synthetic data only**. Please keep it
+that way.
+
+### Workflow
+
+1. **Work on a branch**, never directly on `main`:
+   ```powershell
+   git checkout -b short-description-of-change
+   ```
+2. **Keep changes focused.** One feature or fix per branch makes review easier.
+3. **Write meaningful commit messages** that say what changed and why, for example
+   `Add warning for unknown medication values` rather than `update`.
+4. **Run the tests and check scripts before you push** (see
+   [`docs/setup-guide.md`](docs/setup-guide.md)):
+   ```powershell
+   .venv\Scripts\python.exe -m pytest src\tests -v
+   ```
+   All tests must pass. If you change behaviour on purpose, update or add tests in
+   `src/tests/` — do not delete tests just to make them pass.
+5. **Open a pull request** into `main` describing what changed, why, and how you tested it.
+
+### Project rules
+
+- **No real patient data — ever.** Only fictional, synthetic data belongs in this repository.
+  If you need different demo data, change `src/data/generate_synthetic_data.py` and regenerate
+  `src/data/patients.csv` (a test checks the two match).
+- **No secrets.** TrialGuard needs no API keys or passwords. Never commit `.env` files,
+  credentials or tokens.
+- **Keep rules out of `app.py`.** Detection, severity, scoring, warnings and CAPA logic belong
+  in `src/core/`; thresholds and weights belong in `src/config.py`.
+- **Be honest in the documentation.** Label rules as simplified prototype rules, keep the
+  "not regulatory advice" disclaimers, and do not claim technologies or results that are not
+  in the code.
+- **Do not delete or rename the hackathon template files** (listed in the section below).
+
+---
+
 # How to Submit Your Hackathon Entry
 
 Follow these steps to set up your submission repository correctly.
