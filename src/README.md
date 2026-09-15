@@ -50,8 +50,10 @@ CSV -> data_loader -> deviation_detector -> severity -> risk_scoring
 
 `app.py` contains no detection, severity, scoring or warning rules. It shows:
 
-- **Sidebar:** data source (built-in synthetic data or CSV upload) and site selector
-- **Metric cards:** total sites, patients, deviations, high- and medium-risk sites
+- **Sidebar:** data source (built-in synthetic data or CSV upload with Completed/Ongoing
+  trial status) and site selector
+- **Metric cards:** sites, patients, protocol deviations, HIGH- and MEDIUM-risk sites, sites
+  with early warnings
 - **Study overview tab:** site risk table, risk score bar chart, sites with
   early warnings, deviations by type and severity
 - **Site details tab:** score, level, counts, early warnings, top risk factors,
